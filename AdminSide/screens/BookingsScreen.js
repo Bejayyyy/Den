@@ -627,58 +627,65 @@ const showConfirmation = (title, message, onConfirm) => {
       // Handle quantity adjustments based on status changes
       const oldStatus = existingBooking.status;
       const newStatus = updatedBooking.status;
-      const variantId = updatedBooking.vehicle_variant_id || existingBooking.vehicle_variant_id;
-  
+      const oldVariantId = existingBooking.vehicle_variant_id;
+      const newVariantId = updatedBooking.vehicle_variant_id || oldVariantId;
+
       // Define status changes that affect vehicle availability
       const reservingStatuses = ['confirmed']; // Statuses that reserve a vehicle
       const releasingStatuses = ['completed', 'cancelled', 'declined']; // Statuses that release a vehicle
-      
-      let quantityAdjustment = 0;
-      
-      // Determine if we need to adjust quantities
-      if (oldStatus !== newStatus && variantId) {
-        const wasReserving = reservingStatuses.includes(oldStatus);
-        const isReserving = reservingStatuses.includes(newStatus);
-        const wasReleasing = releasingStatuses.includes(oldStatus);
-        const isReleasing = releasingStatuses.includes(newStatus);
-        
-        if (!wasReserving && isReserving) {
-          // Moving from non-reserving to reserving status (e.g., pending -> confirmed)
-          quantityAdjustment = -1; // Decrease available quantity
-        } else if (wasReserving && isReleasing) {
-          // Moving from reserving to releasing status (e.g., confirmed -> completed/cancelled/declined)
-          quantityAdjustment = +1; // Increase available quantity
-        } else if (wasReserving && !isReserving && !isReleasing) {
-          // Moving from reserving to non-reserving, non-releasing status (e.g., confirmed -> pending)
-          quantityAdjustment = +1; // Increase available quantity
-        }
+
+      // Build a list of quantity adjustments to apply as { variantId, change }
+      const adjustments = [];
+
+      const wasReserving = reservingStatuses.includes(oldStatus);
+      const isReserving = reservingStatuses.includes(newStatus);
+      const wasReleasing = releasingStatuses.includes(oldStatus);
+      const isReleasing = releasingStatuses.includes(newStatus);
+
+      const variantChanged = !!oldVariantId && !!newVariantId && oldVariantId !== newVariantId;
+
+      // Status-driven adjustments
+      if (!wasReserving && isReserving && newVariantId) {
+        // e.g., pending -> confirmed
+        adjustments.push({ variantId: newVariantId, change: -1 });
+      } else if (wasReserving && (isReleasing || (!isReserving && !isReleasing)) && oldVariantId) {
+        // e.g., confirmed -> completed/cancelled/declined OR confirmed -> pending
+        adjustments.push({ variantId: oldVariantId, change: +1 });
+      }
+
+      // Variant change while still reserving (confirmed -> confirmed, variant changed)
+      if (wasReserving && isReserving && variantChanged) {
+        adjustments.push({ variantId: oldVariantId, change: +1 });
+        adjustments.push({ variantId: newVariantId, change: -1 });
       }
   
-      // Check if we have enough vehicles available for reservation
-      if (quantityAdjustment < 0) {
-        const { data: variantData, error: variantError } = await supabase
-          .from('vehicle_variants')
-          .select('available_quantity')
-          .eq('id', variantId)
-          .single();
-  
-        if (variantError || !variantData) {
-          console.error('Error checking variant availability:', variantError);
-          setFeedbackModal({
-            visible: true,
-            type: "error",
-            message: "Failed to check vehicle availability",
-          });
-          return;
-        }
-  
-        if (variantData.available_quantity <= 0) {
-          setFeedbackModal({
-            visible: true,
-            type: "error",
-            message: "No vehicles available for confirmation",
-          });
-          return;
+      // For any decrement adjustments, ensure availability > 0
+      for (const adj of adjustments) {
+        if (adj.change < 0) {
+          const { data: variantData, error: variantError } = await supabase
+            .from('vehicle_variants')
+            .select('available_quantity')
+            .eq('id', adj.variantId)
+            .single();
+
+          if (variantError || !variantData) {
+            console.error('Error checking variant availability:', variantError);
+            setFeedbackModal({
+              visible: true,
+              type: "error",
+              message: "Failed to check vehicle availability",
+            });
+            return;
+          }
+
+          if (variantData.available_quantity <= 0) {
+            setFeedbackModal({
+              visible: true,
+              type: "error",
+              message: "No vehicles available for confirmation",
+            });
+            return;
+          }
         }
       }
   
@@ -713,27 +720,29 @@ const showConfirmation = (title, message, onConfirm) => {
         return;       
       }
   
-      // Apply quantity adjustment if needed
-      if (quantityAdjustment !== 0 && variantId) {
-        const { error: quantityError } = await supabase.rpc('adjust_variant_quantity', {
-          variant_id: variantId,
-          change: quantityAdjustment,
-        });
-  
-        if (quantityError) {
-          console.error('Quantity adjustment error:', quantityError);
-          // Rollback the booking update if quantity adjustment fails
-          await supabase
-            .from('bookings')
-            .update({ status: oldStatus })
-            .eq('id', updatedBooking.id);
-  
-          setFeedbackModal({
-            visible: true,
-            type: "error",
-            message: "Failed to update vehicle availability. Booking status reverted.",
+      // Apply quantity adjustments if needed
+      if (adjustments.length > 0) {
+        for (const adj of adjustments) {
+          const { error: quantityError } = await supabase.rpc('adjust_variant_quantity', {
+            variant_id: adj.variantId,
+            change: adj.change,
           });
-          return;
+
+          if (quantityError) {
+            console.error('Quantity adjustment error:', quantityError);
+            // Best-effort rollback status; note: full rollback of previous adjustments is non-trivial without a transaction
+            await supabase
+              .from('bookings')
+              .update({ status: oldStatus, vehicle_variant_id: oldVariantId })
+              .eq('id', updatedBooking.id);
+
+            setFeedbackModal({
+              visible: true,
+              type: "error",
+              message: "Failed to update vehicle availability. Changes reverted.",
+            });
+            return;
+          }
         }
       }
   

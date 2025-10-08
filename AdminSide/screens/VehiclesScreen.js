@@ -29,9 +29,10 @@ const isWeb = Platform.OS === "web"
 // Pagination constants
 const ITEMS_PER_PAGE = 10
 
-export default function VehiclesScreen({ navigation }) {
+export default function VehiclesScreen({ navigation, route }) {
   const [vehicles, setVehicles] = useState([])
   const [vehicleVariants, setVehicleVariants] = useState([])
+  const [ownersByVehicleId, setOwnersByVehicleId] = useState({})
   const [loading, setLoading] = useState(true)
   const [activeFilter, setActiveFilter] = useState("all")
   const [bookings, setBookings] = useState([])
@@ -44,6 +45,20 @@ export default function VehiclesScreen({ navigation }) {
     type: "success",
     message: ""
   })
+
+  // Open specific vehicle passed via params
+  useEffect(() => {
+    if (route?.params?.openVehicleId && vehicles.length > 0) {
+      const vehicleToOpen = vehicles.find(v => v.id === route.params.openVehicleId)
+      if (vehicleToOpen) {
+        const timer = setTimeout(() => {
+          navigation.navigate("AddVehicle", { vehicle: vehicleToOpen })
+          navigation.setParams({ openVehicleId: undefined })
+        }, 300)
+        return () => clearTimeout(timer)
+      }
+    }
+  }, [route?.params?.openVehicleId, vehicles, navigation])
   
   // Filter dropdowns - ALL DROPDOWN STATES
   const [showMakeFilter, setShowMakeFilter] = useState(false)
@@ -222,6 +237,7 @@ export default function VehiclesScreen({ navigation }) {
   useEffect(() => {
     fetchVehicles()
     fetchVehicleVariants()
+    fetchOwnersForVehicles()
     fetchBookings()
 
     // Set up real-time subscriptions
@@ -255,6 +271,14 @@ export default function VehiclesScreen({ navigation }) {
       )
       .subscribe()
 
+    // Listen to owners/variants relation changes
+    const ownersSubscription = supabase
+      .channel('owners-variants-channel')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'vehicle_variants' }, () => {
+        fetchOwnersForVehicles()
+      })
+      .subscribe()
+
     const bookingsSubscription = supabase
       .channel('bookings-channel')
       .on('postgres_changes', 
@@ -274,6 +298,7 @@ export default function VehiclesScreen({ navigation }) {
       vehiclesSubscription.unsubscribe()
       variantsSubscription.unsubscribe()
       bookingsSubscription.unsubscribe()
+      ownersSubscription.unsubscribe()
     }
   }, [])
 
@@ -314,6 +339,38 @@ export default function VehiclesScreen({ navigation }) {
       setVehicleVariants(variantsData || [])
     } catch (error) {
       console.error('Error in fetchVehicleVariants:', error)
+    }
+  }
+
+  const fetchOwnersForVehicles = async () => {
+    try {
+      // Fetch variants with owner info to map owners per vehicle
+      const { data: variantsWithOwners, error } = await supabase
+        .from('vehicle_variants')
+        .select(`id, vehicle_id, owner_id, car_owners ( id, name )`)
+
+      if (error) {
+        console.error('Error fetching owners for vehicles:', error)
+        return
+      }
+
+      const map = {}
+      ;(variantsWithOwners || []).forEach(v => {
+        const vehicleId = v.vehicle_id
+        const ownerName = v.car_owners?.name
+        if (!vehicleId || !ownerName) return
+        if (!map[vehicleId]) map[vehicleId] = new Set()
+        map[vehicleId].add(ownerName)
+      })
+
+      // Convert sets to comma-separated strings
+      const ownersMap = {}
+      Object.keys(map).forEach(vehicleId => {
+        ownersMap[vehicleId] = Array.from(map[vehicleId]).join(', ')
+      })
+      setOwnersByVehicleId(ownersMap)
+    } catch (e) {
+      console.error('Error in fetchOwnersForVehicles:', e)
     }
   }
 
@@ -552,6 +609,14 @@ export default function VehiclesScreen({ navigation }) {
             <Text style={styles.vehicleDescription} numberOfLines={2}>
               {item.description}
             </Text>
+          )}
+
+          {/* Owner names */}
+          {ownersByVehicleId[item.id] && (
+            <View style={styles.ownerRow}>
+              <Ionicons name="person" size={14} color="#6b7280" />
+              <Text style={styles.ownerText}>Owner: {ownersByVehicleId[item.id]}</Text>
+            </View>
           )}
 
           <View style={styles.actionButtons}>

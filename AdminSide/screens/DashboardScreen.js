@@ -123,8 +123,10 @@ const NotificationItem = ({ notification, onMarkRead, onRemove, setActionModalCo
   if (notification.booking_id && navigation) {
     console.log('Navigating to Bookings with ID:', notification.booking_id); // Debug log
     onClose();
-    navigation.navigate('Bookings', { 
-      openBookingId: notification.booking_id 
+    // Navigate to Bookings tab and forward param to nested BookingsList screen
+    navigation.navigate('Bookings', {
+      screen: 'BookingsList',
+      params: { openBookingId: notification.booking_id }
     });
   }
 };

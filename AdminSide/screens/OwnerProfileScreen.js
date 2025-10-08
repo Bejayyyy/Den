@@ -290,7 +290,15 @@ export default function OwnerProfileScreen({ navigation, route }) {
             </View>
           ) : (
             vehicles.map(variant => (
-              <View key={variant.id} style={styles.vehicleEarningCard}>
+              <TouchableOpacity key={variant.id} style={styles.vehicleEarningCard} onPress={() => {
+                const vehicleId = variant.vehicles?.id;
+                if (vehicleId) {
+                  navigation.navigate('Vehicles', {
+                    screen: 'VehiclesList',
+                    params: { openVehicleId: vehicleId }
+                  });
+                }
+              }}>
                 <View style={styles.vehicleEarningIcon}>
                   <Ionicons name="car" size={24} color="#fcfcfc" />
                 </View>
@@ -315,7 +323,7 @@ export default function OwnerProfileScreen({ navigation, route }) {
                   </Text>
                   <Text style={styles.earningLabel}>Total earned</Text>
                 </View>
-              </View>
+              </TouchableOpacity>
             ))
           )}
         </View>
