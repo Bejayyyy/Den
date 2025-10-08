@@ -76,7 +76,8 @@ const NotificationBell = ({ notifications, onPress }) => {
 };
 
 // Notification Item Component
-const NotificationItem = ({ notification, onMarkRead, onRemove, setActionModalConfig }) => {
+// Notification Item Component
+const NotificationItem = ({ notification, onMarkRead, onRemove, setActionModalConfig, navigation, onClose  }) => {
   const [showActions, setShowActions] = useState(false);
 
   const getNotificationIcon = (type) => {
@@ -110,6 +111,24 @@ const NotificationItem = ({ notification, onMarkRead, onRemove, setActionModalCo
     setShowActions(true);
   };
 
+  const handlePress = () => {
+  console.log('Notification clicked:', notification.booking_id); // Debug log
+  
+  // Mark as read
+  if (!notification.read) {
+    onMarkRead(notification.id);
+  }
+  
+  // Navigate to booking if booking_id exists
+  if (notification.booking_id && navigation) {
+    console.log('Navigating to Bookings with ID:', notification.booking_id); // Debug log
+    onClose();
+    navigation.navigate('Bookings', { 
+      openBookingId: notification.booking_id 
+    });
+  }
+};
+
   const handleMarkRead = () => {
     onMarkRead(notification.id);
     setShowActions(false);
@@ -134,8 +153,8 @@ const NotificationItem = ({ notification, onMarkRead, onRemove, setActionModalCo
           !notification.read && styles.unreadNotification,
           showActions && styles.notificationItemActive
         ]}
-        onPress={handleMarkRead}
-        onLongPress={handleLongPress}
+        onPress={handlePress}        // ⬅️ CHANGED: Now calls handlePress (navigate + mark read)
+        onLongPress={handleLongPress} // ⬅️ CHANGED: Now calls handleLongPress (show actions)
         delayLongPress={500}
       >
         <View style={[styles.notificationIconContainer, { backgroundColor: `${icon.color}20` }]}>
@@ -170,8 +189,6 @@ const NotificationItem = ({ notification, onMarkRead, onRemove, setActionModalCo
                 Mark as read
               </Text>
             </TouchableOpacity>
-            
-            
           )}
           <TouchableOpacity 
             style={[styles.notificationActionButton, styles.removeButton]}
@@ -198,7 +215,7 @@ const NotificationItem = ({ notification, onMarkRead, onRemove, setActionModalCo
 };
 
 // Notifications Modal Component
-const NotificationsModal = ({ visible, notifications, onClose, onMarkRead, onMarkAllRead, onRemove,setActionModalConfig,onClearAll}) => {
+const NotificationsModal = ({ visible, notifications, onClose, onMarkRead, onMarkAllRead, onRemove,setActionModalConfig,onClearAll,  navigation  }) => {
   return (
     <Modal
       visible={visible}
@@ -238,6 +255,8 @@ const NotificationsModal = ({ visible, notifications, onClose, onMarkRead, onMar
               onMarkRead={onMarkRead}
               onRemove={onRemove}
               setActionModalConfig={setActionModalConfig}
+              navigation={navigation} 
+               onClose={onClose} 
             />
           )}
           contentContainerStyle={styles.notificationsList}
@@ -855,7 +874,7 @@ export default function DashboardScreen({ navigation }) {
   );
 
   return (
-<View style={styles.container}>      {/* Header */}
+<View style={styles.container}>      
       <View style={styles.header}>
         <View style={styles.headerLeft}>
           <Text style={styles.headerTitle}>Dashboard</Text>
@@ -1111,6 +1130,7 @@ export default function DashboardScreen({ navigation }) {
         onClearAll={handleClearAll} 
         onRemove={handleRemoveNotification}
         setActionModalConfig={setActionModalConfig}
+         navigation={navigation}  
       />
 
       {/* Action Modal */}
@@ -1204,7 +1224,7 @@ const styles = StyleSheet.create({
     position: 'relative',
     padding: 10,
     borderRadius: 8,
-    backgroundColor: '#black',
+    backgroundColor: '#000',
   },
   notificationBadge: {
     position: 'absolute',

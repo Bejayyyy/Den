@@ -28,7 +28,7 @@ import EmailService from '../services/emailService';
 
 const { width } = Dimensions.get('window');
 
-export default function BookingsScreen() {
+export default function BookingsScreen({ route, navigation }) {
   
   const [selectedBooking, setSelectedBooking] = useState(null)
   const [bookings, setBookings] = useState([]);
@@ -147,6 +147,25 @@ const handleBookingAdded = async (newBooking) => {
     fetchAvailableVehicles();
   }, []);
 
+useEffect(() => {
+  if (route?.params?.openBookingId && bookings.length > 0) {
+    const bookingToOpen = bookings.find(b => b.id === route.params.openBookingId);
+    if (bookingToOpen) {
+      console.log('Opening booking modal for:', bookingToOpen.id); // Debug log
+      
+      // Use a longer timeout to ensure the screen is fully rendered
+      const timer = setTimeout(() => {
+        openEditModal(bookingToOpen);
+        // Clear param after modal opens
+        navigation.setParams({ openBookingId: undefined });
+      }, 800); // Increased timeout
+      
+      return () => clearTimeout(timer);
+    } else {
+      console.log('Booking not found:', route.params.openBookingId); // Debug log
+    }
+  }
+}, [route?.params?.openBookingId, bookings, openEditModal, navigation]);
   useEffect(() => {
     filterBookings();
     generateChartData();
