@@ -229,7 +229,7 @@ const DetailsModal = ({ isOpen, onClose, car, onRentClick }) => {
     </div>
   );
 };
-const RentalModal = ({ isOpen, onClose, selectedCar, refreshBookings }) => {
+const RentalModal = ({ isOpen, onClose, selectedCar, refreshBookings, onShowToast }) => {
   const [formData, setFormData] = useState({
     fullName: "",
     email: "",
@@ -247,7 +247,6 @@ const RentalModal = ({ isOpen, onClose, selectedCar, refreshBookings }) => {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [totalPrice, setTotalPrice] = useState(0);
   const [rentalDays, setRentalDays] = useState(0);
-  const [toast, setToast] = useState({ type: "", message: "", isVisible: false });
   const [variantsLoading, setVariantsLoading] = useState(false);
   const [bookedDates, setBookedDates] = useState([]);
 
@@ -256,11 +255,25 @@ const RentalModal = ({ isOpen, onClose, selectedCar, refreshBookings }) => {
     return () => (document.body.style.overflow = "auto");
   }, [isOpen]);
 
-  // Fetch booked dates for the selected variant
+  // Fetch fully-booked dates for the selected variant (respect total_quantity)
   const fetchBookedDates = async (variantId) => {
     if (!variantId) return;
     
     try {
+      // Get total_quantity for the variant
+      const { data: variantRow, error: variantErr } = await supabase
+        .from('vehicle_variants')
+        .select('total_quantity')
+        .eq('id', variantId)
+        .single();
+
+      if (variantErr || !variantRow) {
+        console.error('Error fetching variant quantity:', variantErr);
+        return;
+      }
+      const totalQuantity = Number(variantRow.total_quantity || 0);
+
+      // Get confirmed bookings for this variant
       const { data, error } = await supabase
         .from("bookings")
         .select("rental_start_date, rental_end_date")
@@ -268,16 +281,19 @@ const RentalModal = ({ isOpen, onClose, selectedCar, refreshBookings }) => {
         .eq("status", "confirmed");
 
       if (!error && data) {
-        const dates = [];
+        const dateToCount = {};
         data.forEach(booking => {
           const start = new Date(booking.rental_start_date);
           const end = new Date(booking.rental_end_date);
-          
           for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
-            dates.push(new Date(d).toISOString().split('T')[0]);
+            const key = new Date(d).toISOString().split('T')[0];
+            dateToCount[key] = (dateToCount[key] || 0) + 1;
           }
         });
-        setBookedDates(dates);
+        const fullyBooked = Object.entries(dateToCount)
+          .filter(([, count]) => count >= totalQuantity)
+          .map(([date]) => date);
+        setBookedDates(fullyBooked);
       }
     } catch (err) {
       console.error('Error fetching booked dates:', err);
@@ -333,8 +349,6 @@ const RentalModal = ({ isOpen, onClose, selectedCar, refreshBookings }) => {
     }
   }, [formData.pickupDate, formData.returnDate, selectedCar, selectedVariant]);
 
-  const showToast = (type, message) => setToast({ type, message, isVisible: true });
-  const hideToast = () => setToast((t) => ({ ...t, isVisible: false }));
 
   const handleInputChange = (e) => setFormData((s) => ({ ...s, [e.target.name]: e.target.value }));
 
@@ -349,11 +363,11 @@ const RentalModal = ({ isOpen, onClose, selectedCar, refreshBookings }) => {
     if (!file) return;
     const allowed = ["image/jpeg", "image/png", "image/jpg"];
     if (!allowed.includes(file.type)) {
-      showToast("error", "Only JPG/PNG images allowed.");
+      onShowToast && onShowToast("error", "Only JPG/PNG images allowed.");
       return;
     }
     if (file.size > 5 * 1024 * 1024) {
-      showToast("error", "File size must be under 5MB");
+      onShowToast && onShowToast("error", "File size must be under 5MB");
       return;
     }
     setGovIdFile(file);
@@ -371,12 +385,12 @@ const RentalModal = ({ isOpen, onClose, selectedCar, refreshBookings }) => {
 
     try {
       if (!formData.vehicleVariantId) {
-        showToast("error", "Please select a color variant.");
+        onShowToast && onShowToast("error", "Please select a color variant.");
         setIsSubmitting(false);
         return;
       }
       if (!govIdFile) {
-        showToast("error", "Please upload a valid Government ID image.");
+        onShowToast && onShowToast("error", "Please upload a valid Government ID image.");
         setIsSubmitting(false);
         return;
       }
@@ -384,7 +398,7 @@ const RentalModal = ({ isOpen, onClose, selectedCar, refreshBookings }) => {
       const start = new Date(formData.pickupDate);
       const end = new Date(formData.returnDate);
       if (!(formData.pickupDate && formData.returnDate) || end < start) {
-        showToast("error", "Please set a valid rental date range.");
+        onShowToast && onShowToast("error", "Please set a valid rental date range.");
         setIsSubmitting(false);
         return;
       }
@@ -393,7 +407,7 @@ const RentalModal = ({ isOpen, onClose, selectedCar, refreshBookings }) => {
       for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
         const dateStr = new Date(d).toISOString().split('T')[0];
         if (isDateBooked(dateStr)) {
-          showToast("error", "Selected dates are already booked. Please choose different dates.");
+          onShowToast && onShowToast("error", "Selected dates are already booked. Please choose different dates.");
           setIsSubmitting(false);
           return;
         }
@@ -454,22 +468,22 @@ const RentalModal = ({ isOpen, onClose, selectedCar, refreshBookings }) => {
         const emailResult = await emailResponse.json();
         
         if (emailResult.success) {
-          showToast("success", "Booking submitted and confirmation email sent!");
+          onShowToast && onShowToast("success", "Booking submitted and confirmation email sent!");
         } else {
-          showToast("success", "Booking submitted! (Email notification may be delayed)");
+          onShowToast && onShowToast("success", "Booking submitted! (Email notification may be delayed)");
         }
       } catch (emailError) {
         console.error("Email service error:", emailError);
-        showToast("success", "Booking submitted! (Email notification may be delayed)");
+        onShowToast && onShowToast("success", "Booking submitted! (Email notification may be delayed)");
       }
 
       await refreshBookings?.();
       await refreshVariants();
-      setTimeout(() => onClose(), 1200);
+      setTimeout(() => onClose(), 800);
       
     } catch (err) {
       console.error(err);
-      showToast("error", "Booking failed. Please try again.");
+      onShowToast && onShowToast("error", "Booking failed. Please try again.");
     } finally {
       setIsSubmitting(false);
     }
@@ -523,7 +537,6 @@ const RentalModal = ({ isOpen, onClose, selectedCar, refreshBookings }) => {
 
   return (
     <>
-      <Toast {...toast} onClose={hideToast} />
       <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[9998] flex items-center justify-center p-4">
         <div className="bg-gradient-to-br from-slate-50 via-gray-50 to-slate-100 rounded-2xl max-w-7xl w-full max-h-[95vh] overflow-y-auto shadow-2xl">
           <div className="flex flex-col lg:flex-row min-h-[700px]">
@@ -1842,6 +1855,9 @@ const FAQs = () => {
    =========================== */  
   
   const App = () => {
+    const [rootToast, setRootToast] = useState({ type: "", message: "", isVisible: false });
+    const showRootToast = (type, message) => setRootToast({ type, message, isVisible: true });
+    const hideRootToast = () => setRootToast((t) => ({ ...t, isVisible: false }));
     const [isModalOpen, setIsModalOpen] = useState(false)
     const [selectedCar, setSelectedCar] = useState(null)
     const [bookings, setBookings] = useState([]) // 🆕 show active bookings for cancel
@@ -1893,6 +1909,7 @@ const FAQs = () => {
   
     return (
       <div className="min-h-screen bg-[#F0F5F8] flex flex-col">
+        <Toast {...rootToast} onClose={hideRootToast} />
         <Navbar
           onRentClick={() => handleRentClick()}
           scrollToSection={scrollToSection}
@@ -1939,6 +1956,7 @@ const FAQs = () => {
           onClose={() => setIsRentalOpen(false)}
           selectedCar={selectedCar}
           selectedVariant={selectedVariant}
+          onShowToast={showRootToast}
         />
   
         <div ref={faqRef} id="faqs">
